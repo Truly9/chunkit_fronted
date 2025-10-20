@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-多模态RAG系统封装类 - 精简优化版
+多模态RAG系统封装类 
 提供build、insert、retrieve三个核心功能接口
 支持campus和psychology双场景
 """
@@ -49,7 +49,7 @@ class MultiRAG:
         初始化MultiRAG系统
     
         Args:
-            scene: 场景类型 ("campus" 或 "psychology")
+            scene: 场景类型 ("campus" 或 "psychology"或"fitness"或"paper")
             embedding_model_path: 嵌入模型路径
             cross_encoder_path: 交叉编码器路径
         """
@@ -65,9 +65,9 @@ class MultiRAG:
             self.image_mapping_file = str(PSYCHOLOGY_IMAGES_MAPPING_PATH)
             self.collection_name = "psychology_docs"
         else:
-            self.index_path = str(CAMPUS_INDEX_DIR)
-            self.image_output_dir = str(CAMPUS_IMAGES_PATH)
-            self.image_mapping_file = str(CAMPUS_IMAGES_MAPPING_PATH)
+            self.index_path = f"str({scene}_INDEX_DIR)"
+            self.image_output_dir = f"str({scene}_IMAGES_PATH)"
+            self.image_mapping_file = f"str({scene}_IMAGES_MAPPING_PATH)"
             self.collection_name = f"{scene}_docs"
         
         self.scene = scene
@@ -473,13 +473,13 @@ class MultiRAG:
             if os.path.exists(self.image_mapping_file):
                 with open(self.image_mapping_file, 'r', encoding='utf-8') as f:
                     mapping = json.load(f)
-                    print(f"✅ 成功加载图片映射文件，包含 {len(mapping)} 个图片条目")
+                    print(f"成功加载图片映射文件，包含 {len(mapping)} 个图片条目")
                     return mapping
             else:
-                print(f"❌ 图片映射文件不存在: {self.image_mapping_file}")
+                print(f"图片映射文件不存在: {self.image_mapping_file}")
                 return {}
         except Exception as e:
-            print(f"❌ 加载图片映射文件失败: {e}")
+            print(f"加载图片映射文件失败: {e}")
             return {}
         
     def _save_image_mapping(self):
@@ -557,7 +557,7 @@ class MultiRAG:
     
     def retrieve(self, query: str, topk: int = 5) -> List[Dict[str, Any]]:
         """
-        修复的检索方法 - 正确使用图片映射文件
+        检索-使用图片映射文件
         """
         try:
             # 1. 生成查询向量
@@ -583,13 +583,13 @@ class MultiRAG:
                 content = result.get('content', '')
                 score = result.get('score', 0)
                 
-                # 【关键修复】检查是否是图片描述
+                # 检查是否是图片描述
                 # 图片描述通常以 "image_" 开头，后面跟着场景和哈希值
                 if content.startswith('image_'):
                     # 提取图片ID（格式：image_psychology_xxxx）
                     image_id = content.split(':', 1)[0].strip() if ':' in content else content.strip()
                     
-                    print(f"🔍 发现图片内容: {image_id}")
+                    print(f"发现图片内容: {image_id}")
                     
                     # 从映射文件中获取图片信息
                     img_info = image_mapping.get(image_id, {})
@@ -598,7 +598,7 @@ class MultiRAG:
                     
                     # 验证图片文件是否存在
                     if img_path and os.path.exists(img_path):
-                        print(f"✅ 图片文件存在: {img_path}")
+                        print(f"图片文件存在: {img_path}")
                         formatted_results.append({
                             "type": 1,  # 图片类型
                             "document": description,
@@ -607,7 +607,7 @@ class MultiRAG:
                             "content": content
                         })
                     else:
-                        print(f"❌ 图片文件不存在: {img_path}")
+                        print(f"图片文件不存在: {img_path}")
                         # 即使文件不存在，也返回图片描述
                         formatted_results.append({
                             "type": 1,
@@ -629,7 +629,7 @@ class MultiRAG:
             # 打印调试信息
             image_count = len([r for r in formatted_results if r['type'] == 1])
             text_count = len([r for r in formatted_results if r['type'] == 0])
-            print(f"📊 检索结果统计: {image_count} 个图片, {text_count} 个文本")
+            print(f"检索结果统计: {image_count} 个图片, {text_count} 个文本")
             
             return formatted_results
             

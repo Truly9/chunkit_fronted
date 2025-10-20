@@ -284,10 +284,10 @@ class ImageExtractor:
         try:
             with open(image_path, 'wb') as f:
                 f.write(image_data)
-            print(f"✅ 图片已保存: {filename}")
+            print(f"图片已保存: {filename}")
             return image_path
         except Exception as e:
-            print(f"❌ 保存图片失败 {filename}: {e}")
+            print(f"保存图片失败 {filename}: {e}")
             return ""
 
     def process_all_documents(self, processed_hashes: Set[str] = None) -> List[Dict]:
@@ -394,7 +394,7 @@ class ImageExtractor:
                 print(f"处理文档 {docx_path} 时出错: {e}")
                 continue
         
-        print(f"\n✅ 图片处理完成: 共处理 {len(all_processed_images)} 张图片")
+        print(f"\n图片处理完成: 共处理 {len(all_processed_images)} 张图片")
         print(f"   输出目录: {self.output_dir}")
         return all_processed_images
 
@@ -430,9 +430,9 @@ class ImageExtractor:
         try:
             with open(json_path, 'w', encoding='utf-8') as f:
                 json.dump(existing_data, f, ensure_ascii=False, indent=2)
-            print(f"✅ 图片数据已追加到JSON文件: {json_path}")
+            print(f"图片数据已追加到JSON文件: {json_path}")
         except Exception as e:
-            print(f"❌ 写入JSON文件失败: {e}")
+            print(f"写入JSON文件失败: {e}")
 
     def _verify_filename_consistency(self, processed_images: List[Dict]):
         """验证文件名一致性"""
@@ -459,13 +459,13 @@ class ImageExtractor:
                         print(f"❌ 不一致: 文件名哈希={hash_from_filename}, 存储哈希={stored_hash}")
     
         print(f"一致性检查结果:")
-        print(f"  ✅ 一致的文件: {consistent_count}")
-        print(f"  ❌ 不一致的文件: {inconsistent_count}")
+        print(f"一致的文件: {consistent_count}")
+        print(f"不一致的文件: {inconsistent_count}")
     
         if inconsistent_count == 0:
-            print("🎉 所有文件名和哈希完全一致！")
+            print("所有文件名和哈希完全一致！")
         else:
-            print("⚠️ 存在不一致的文件，需要修复")
+            print("存在不一致的文件，需要修复")
 
     def save_images_to_word(self, processed_images: List[Dict], output_path: str):
         """将处理后的图片和描述保存到Word文档"""
@@ -535,7 +535,7 @@ class UnifiedImageManager:
         
         # 如果需要强制重新处理，清空已处理哈希
         if force_reprocess:
-            print(f"⚠️ 强制重新处理场景: {self.scene}")
+            print(f"强制重新处理场景: {self.scene}")
             processed_hashes = set()
             
             # 删除JSON文件以重新开始
@@ -579,26 +579,26 @@ class UnifiedImageManager:
         json_path = self._get_scene_json_path()
         if os.path.exists(json_path):
             os.remove(json_path)
-            print(f"✅ 已重置场景 {self.scene} 的处理进度")
+            print(f"已重置场景 {self.scene} 的处理进度")
         else:
-            print(f"⚠️ 场景 {self.scene} 没有找到可重置的进度文件")
+            print(f"场景 {self.scene} 没有找到可重置的进度文件")
 
 
 def main():
     """主函数 - 处理多个场景"""
-    # # 处理 campus 场景
-    # print("=" * 50)
-    # print("开始处理 CAMPUS 场景的Word文档中的图片...")
+    # 处理 campus 场景
+    print("=" * 50)
+    print("开始处理 CAMPUS 场景的Word文档中的图片...")
     
-    # campus_manager = UnifiedImageManager("campus")
-    # processed_images_campus = campus_manager.process_images(incremental=True)
+    campus_manager = UnifiedImageManager("campus")
+    processed_images_campus = campus_manager.process_images(incremental=True)
     
-    # if processed_images_campus:
-    #     print(f"\nCAMPUS 场景总共处理了 {len(processed_images_campus)} 张图片")
-    # else:
-    #     print("CAMPUS 场景没有找到任何新图片")
+    if processed_images_campus:
+        print(f"\nCAMPUS 场景总共处理了 {len(processed_images_campus)} 张图片")
+    else:
+        print("CAMPUS 场景没有找到任何新图片")
     
-    # 处理 psychology 场景（强制重新处理）
+    #处理 psychology 场景（强制重新处理）
     print("\n" + "=" * 50)
     print("开始处理 PSYCHOLOGY 场景的Word文档中的图片...")
     

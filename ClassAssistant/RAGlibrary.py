@@ -1,4 +1,8 @@
-#----这个应该和callback的功能一致，我更新之后没有再用这里的子类和方法了，后续应该可以直接删掉??----#
+#----这个应该和callback的功能一致?----#
+import sys
+parent_dir = "./ClassAssistant"
+if parent_dir not in sys.path:
+    sys.path.append(parent_dir) 
 
 from LLMmodel import LLM_model
 from LLMmodel import LLM_psychology

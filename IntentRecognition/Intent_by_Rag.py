@@ -12,19 +12,13 @@ from langchain.schema import Document
 
 # 获取当前文件所在目录
 current_dir = os.path.dirname(os.path.abspath(__file__))
-print(f"当前文件目录: {current_dir}")
+parent_dir = os.path.dirname(current_dir)
 
-# 计算项目根目录 - 向上退3级
-project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(current_dir))))
-print(f"项目根目录: {project_root}")
-
-# 将项目根目录添加到Python路径
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
-
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 
 print("--- 引入qwen3-Embeddings模型 ---")
-model_path = os.path.join(project_root, "Qwen3-Embedding-0___6B")
+model_path = os.path.join(parent_dir, "Qwen3-Embedding-0___6B")
 embeddings = HuggingFaceEmbeddings(
     model_name=model_path,
     model_kwargs={"device": "cpu"}
@@ -38,7 +32,8 @@ client = OpenAI(
 
 
 
-# ---  RAG类,用于 Intent_answer ---
+# ---  RAG类,（用语料库）构建的索引 <IntentRecognition\faiss_corpus_index> 用于意图识别，目的是将用户问题分类到四个意图之一  ---
+
 class RagQueryEnhancer:
     def __init__(self, corpus_folder=None, index_path="faiss_corpus_index"):
         """
