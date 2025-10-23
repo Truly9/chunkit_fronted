@@ -1,4 +1,4 @@
-from faiss_store_y import FAISSVectorStore
+from Text_Processor.faiss_store_y import FAISSVectorStore
 from retrieve_model import retrieve_relevant_chunks
 import time
 

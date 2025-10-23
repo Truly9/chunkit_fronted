@@ -10,6 +10,7 @@ sys.path.insert(0, multiRAG_dir)
 from multiRAG import MultiRAG
 from ClassAssistant.LLMmodel import LLM_compus, LLM_psychology, LLM_paper, LLM_fitness
 
+
 from Utils.Path import (
     PAPER_DOCS_DIR, CAMPUS_DOCS_DIR, FITNESS_DOCS_DIR, PSYCHOLOGY_DOCS_DIR,
     PAPER_INDEX_DIR, CAMPUS_INDEX_DIR, FITNESS_INDEX_DIR, PSYCHOLOGY_INDEX_DIR,
@@ -30,7 +31,7 @@ class BaseAssistant(ABC):
         self.app_id = app_id or APP_ID
         self.api_key = apiKey
         self.session_id = session_id
-        self.multirag = MultiRAG(scene=scene)
+        self.multi_rag = MultiRAG(scene=scene)
         self.llm_instance = llm_class(self.app_id)
         self.debug = debug
         self.use_fallback = use_fallback  # 默认使用备用方案
@@ -166,8 +167,8 @@ class BaseAssistant(ABC):
                 traceback.print_exc()
             yield error_message
 
-    def _process_retrieval_results(self, results):
-        """处理检索结果 - 通用实现"""
+    def _process_retrieval_results(self, results, image_map, image_output_dir, debug=False):
+        """处理检索结果，包括文本和图片"""
         text_chunks = []
         images = []
         
@@ -242,37 +243,66 @@ class BaseAssistant(ABC):
         else:
             return {"answer": message, "images": [], "total_results": 0}
 
-    def retrieve_and_answer(self, query: str, top_k: int = 8, stream_mode: bool = False):
-        """智能检索并回答问题"""
+    def retrieve_and_answer(self, query, top_k=8, stream_mode=False):
+        """检索并回答"""
+        print(f"{self.__class__.__name__}: 正在检索与问题相关的top-{top_k}片段...")
+    
+        # 检查索引状态
+        status = self.multi_rag.check_index_status()
+        print(f"索引状态: {status['documents_count']} 个文档")
+    
         try:
-            print(f"{self.__class__.__name__}: 正在检索与问题相关的top-{top_k}片段...")
-            results = self.multirag.retrieve(query, topk=top_k)
-
+            # 检索相关文档
+            results = self.multi_rag.retrieve(query, top_k)
+        
             if not results:
                 print(f"{self.__class__.__name__}: 未找到相关片段，使用通用知识回答")
-                return self._create_empty_response(stream_mode, "抱歉，未找到相关信息。")
-
-            # 处理检索结果
-            text_chunks, images = self._process_retrieval_results(results)
-            print(f"{self.__class__.__name__}: 检索到 {len(text_chunks)} 个文本片段，{len(images)} 个图片")
-
-            # 构建增强的prompt
-            enhanced_chunks = self._enhance_chunks(text_chunks, images)
-
-            # 调用LLM生成回答
-            if self.use_fallback:
-                # 使用简化版本
-                return self._generate_response_simple(query, enhanced_chunks, images, len(results), stream_mode)
-            else:
-                # 使用高级版本
-                return self._generate_response_advanced(query, enhanced_chunks, images, len(results), stream_mode)
-
+                # 即使没有检索到，也使用LLM回答
+                return self._fallback_answer(query, stream_mode)
+        
+            print(f"{self.__class__.__name__}: 找到 {len(results)} 个相关片段")
+        
+            # 获取图片映射和输出目录
+            image_map = self.multi_rag._load_image_mapping()
+            image_output_dir = self.multi_rag.image_output_dir
+    
+            # 修正调用：传入正确的参数
+            text_chunks, images = self._process_retrieval_results(
+                results, image_map, image_output_dir, self.debug
+            )
+        
+            # 然后使用 text_chunks 和 images 生成回答
+            return self._generate_final_answer(query, text_chunks, images, stream_mode)
+        
         except Exception as e:
-            print(f"{self.__class__.__name__}检索过程出错: {e}")
+            print(f"{self.__class__.__name__}: 检索过程中发生错误: {e}")
             import traceback
             traceback.print_exc()
-            return self._create_error_response(stream_mode, str(e))
+            return self._fallback_answer(query, stream_mode)
+    def _generate_final_answer(self, query, text_chunks, images, stream_mode=False):
+        """使用处理后的文本块和图片生成最终回答"""
+        # 增强文本片段
+        enhanced_chunks = self._enhance_chunks(text_chunks, images)
+        total_results = len(enhanced_chunks)
+    
+        # 根据是否使用备用方案选择生成方式
+        if self.use_fallback:
+            return self._generate_response_simple(query, enhanced_chunks, images, total_results, stream_mode)
+        else:
+            return self._generate_response_advanced(query, enhanced_chunks, images, total_results, stream_mode)
 
+    def _fallback_answer(self, query, stream_mode):
+        """后备回答方法"""
+        if stream_mode:
+            return {
+            "answer_generator": iter([f"关于'{query}'，我暂时没有找到相关的专门资料，但根据我的理解：\n\n这是一个常见的问题，建议您咨询相关部门或查看官方网站获取最新信息。"]),
+            "images": []
+        }
+        else:
+            return {
+                "answer": f"关于'{query}'，我暂时没有找到相关的专门资料，但根据我的理解：\n\n这是一个常见的问题，建议您咨询相关部门或查看官方网站获取最新信息。",
+                "images": []
+            }
     def _generate_response_simple(self, query, enhanced_chunks, images, total_results, stream_mode):
         """使用简化方案生成响应"""
         separator = "\n\n"

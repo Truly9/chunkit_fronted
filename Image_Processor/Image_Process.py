@@ -66,13 +66,13 @@ class ImageExtractor:
         # 初始化Qwen3-VL客户端
         self.qwen3_vl_client = OpenAI(
             base_url='https://api-inference.modelscope.cn/v1',
-            api_key='ms-56e481ae-fc65-4c3e-8b7c-88d7d9964dcb'
+            api_key='ms-03eaf898-af6c-4a07-9857-1afb8337c1b4'
         )
 
         # 初始化Qwen3.0客户端
         self.qwen3_client = OpenAI(
             base_url='https://api-inference.modelscope.cn/v1',
-            api_key='ms-56e481ae-fc65-4c3e-8b7c-88d7d9964dcb'
+            api_key='ms-03eaf898-af6c-4a07-9857-1afb8337c1b4'
         )
 
     def _detect_scene(self, folder_path: str) -> str:

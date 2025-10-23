@@ -29,7 +29,6 @@ var/
 # Model files and large data
 Qwen3-Embedding-0___6B/
 cross-encoder-model/
-faiss_index/
 
 # Logs
 *.log

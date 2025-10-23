@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from IntentRecognition.Intent_by_Rag import RagQueryEnhancer
 from ClassAssistant.callback import CampusAssistant, PsychologyAssistant, FitnessAssistant, PaperAssistant
 import ClassAssistant.callback
+
 print(f"callback.py 文件位置: {ClassAssistant.callback.__file__}")
 # 加载 .env 文件
 env_path = "Agent.env"

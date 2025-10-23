@@ -25,7 +25,7 @@ if parent_dir not in sys.path:
 
 # 现在可以正确导入 faiss_store_y
 try:
-    from faiss_store_y import FAISSVectorStore
+    from Text_Processor.faiss_store_y import FAISSVectorStore
     print("成功导入 FAISSVectorStore")
 except ImportError as e:
     print(f"导入错误: {e}")

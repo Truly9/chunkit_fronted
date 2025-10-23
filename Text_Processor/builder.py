@@ -13,15 +13,14 @@ from datetime import datetime
 from pathlib import Path
 from docx import Document
 
-from faiss_store_y import FAISSVectorStore
-from sentence_transformers import SentenceTransformer
-from textsplitters import RecursiveCharacterTextSplitter
-
 current_dir = os.path.dirname(os.path.abspath(__file__)) 
 parent_dir = os.path.dirname(current_dir)
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
+from faiss_store_y import FAISSVectorStore
+from sentence_transformers import SentenceTransformer
+from textsplitters import RecursiveCharacterTextSplitter
 
 from Utils.Path import (
     PAPER_DOCS_DIR, CAMPUS_DOCS_DIR, FITNESS_DOCS_DIR, PSYCHOLOGY_DOCS_DIR,
@@ -78,11 +77,11 @@ def load_images_status(images_file_path):
         try:
             with open(images_file_path, 'r', encoding='utf-8') as f:
                 images_data = json.load(f)
-                # 转换为以source_file为键的字典，方便查找
+                # 转换为以source_path为键的字典，方便查找
                 images_status = {}
                 for item in images_data:
-                    if isinstance(item, dict) and 'source_file' in item:
-                        images_status[item['source_file']] = True  #记录的图片文件路径存在，就表示已处理
+                    if isinstance(item, dict) and 'source_path' in item:
+                        images_status[item['source_path']] = True  
                 return images_status
         except Exception as e:
             print(f"读取图像处理状态文件失败 {images_file_path}: {str(e)}")
@@ -322,8 +321,7 @@ class BaseAgentKnowledgeBase:
         if not self.images_status:
             return False
             
-        filename = os.path.basename(file_path)
-        return filename in self.images_status
+        return file_path in self.images_status
 
     def _mark_file_processed(self, file_path: str):
         """标记文件为已处理"""
@@ -354,6 +352,9 @@ class BaseAgentKnowledgeBase:
         all_files = []
         for root, dirs, files in os.walk(folder_name):
             for file in files:
+                # 跳过临时文件（以~$开头的文件）
+                if file.startswith('~$'):
+                    continue
                 file_ext = os.path.splitext(file)[1].lower()
                 if file_ext in supported_extensions:
                     full_path = os.path.join(root, file)
@@ -501,7 +502,7 @@ class BaseAgentKnowledgeBase:
             print("没有可用的备份")
 
 # 子类定义
-class PsychologyAssistant(BaseAgentKnowledgeBase):
+class PsychologyKnowledgeBase(BaseAgentKnowledgeBase):
     def __init__(self):
         super().__init__(
             index_path=str(PSYCHOLOGY_INDEX_DIR),
@@ -510,7 +511,7 @@ class PsychologyAssistant(BaseAgentKnowledgeBase):
             images_status_file=PSYCHOLOGY_IMAGES_FILE
         )
 
-class CampusQnA(BaseAgentKnowledgeBase):
+class CampusKnowledgeBase(BaseAgentKnowledgeBase):
     def __init__(self):
         super().__init__(
             index_path=str(CAMPUS_INDEX_DIR),
@@ -519,7 +520,7 @@ class CampusQnA(BaseAgentKnowledgeBase):
             images_status_file=CAMPUS_IMAGES_FILE
         )
 
-class FitnessDietAssistant(BaseAgentKnowledgeBase):
+class FitnessKnowledgeBase(BaseAgentKnowledgeBase):
     def __init__(self):
         super().__init__(
             index_path=str(FITNESS_INDEX_DIR),
@@ -528,7 +529,7 @@ class FitnessDietAssistant(BaseAgentKnowledgeBase):
             images_status_file=FITNESS_IMAGES_FILE
         )
 
-class PaperAssistant(BaseAgentKnowledgeBase):
+class PaperKnowledgeBase(BaseAgentKnowledgeBase):
     def __init__(self):
         super().__init__(
             index_path=str(PAPER_INDEX_DIR),
@@ -544,15 +545,15 @@ if __name__ == '__main__':
         print("检测到FAISS索引丢失，正在重新构建...")
         
         # 显示当前状态
-        psychology_kb = PsychologyAssistant()
-        campus_kb = CampusQnA()
-        fitness_kb = FitnessDietAssistant()
-        paper_kb = PaperAssistant()
+        psychology_kb = PsychologyKnowledgeBase()
+        campus_kb = CampusKnowledgeBase()
+        fitness_kb = FitnessKnowledgeBase()
+        paper_kb = PaperKnowledgeBase()
         
         knowledge_bases = [
             ("心理助手", psychology_kb, PSYCHOLOGY_DOCS_DIR),
-            ("校园问答", campus_kb, CAMPUS_DOCS_DIR),
-            ("健身饮食", fitness_kb, FITNESS_DOCS_DIR),
+            ("校园问答助手", campus_kb, CAMPUS_DOCS_DIR),
+            ("健康饮食助手", fitness_kb, FITNESS_DOCS_DIR),
             ("论文助手", paper_kb, PAPER_DOCS_DIR)
         ]
         

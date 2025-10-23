@@ -1,4 +1,5 @@
-#----这个应该和callback的功能一致?----#
+#----这个应该和callback的功能一致?我修改后的代码没有用到这个模块了----#
+
 import sys
 parent_dir = "./ClassAssistant"
 if parent_dir not in sys.path:
@@ -9,7 +10,7 @@ from LLMmodel import LLM_psychology
 from LLMmodel import LLM_fitness
 from LLMmodel import LLM_compus
 from LLMmodel import LLM_paper
-from faiss_store_y import FAISSVectorStore  # 引入FAISS向量存储
+from Text_Processor.faiss_store_y import FAISSVectorStore  # 引入FAISS向量存储
 from retrieve_model import retrieve_relevant_chunks
 from sentence_transformers import SentenceTransformer
 from sentence_transformers import CrossEncoder

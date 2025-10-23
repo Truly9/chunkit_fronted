@@ -5,7 +5,7 @@ from sentence_transformers import CrossEncoder
 import torch
 import numpy as np
 from typing import List, Tuple, Optional
-from faiss_store_y import FAISSVectorStore  # 引入FAISS向量存储
+from Text_Processor.faiss_store_y import FAISSVectorStore  # 引入FAISS向量存储
 
 local_model_path = "./cross-encoder-model"
 collection_name = "document_embeddings"
