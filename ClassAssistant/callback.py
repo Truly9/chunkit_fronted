@@ -28,13 +28,23 @@ class BaseAssistant(ABC):
     """所有助手的基类，提供通用功能"""
     
     def __init__(self, app_id, session_id, scene, llm_class, debug=False, use_fallback=True):
-        self.app_id = app_id or APP_ID
-        self.api_key = apiKey
+        # 从环境变量获取 API 配置
+        self.app_id = app_id or os.getenv(f"APP_ID_{scene.upper()}", APP_ID)
+        self.api_key = os.getenv("BAILIAN_API_KEY", apiKey)
         self.session_id = session_id
         self.multi_rag = MultiRAG(scene=scene)
         self.llm_instance = llm_class(self.app_id)
         self.debug = debug
-        self.use_fallback = use_fallback  # 默认使用备用方案
+        self.use_fallback = use_fallback
+        
+        if self.debug:
+            print(f"{self.__class__.__name__} 配置:")
+            print(f"  App ID: {self.app_id}")
+            print(f"  Scene: {scene}")
+            print(f"  Session ID: {self.session_id}")
+            print(f"  Debug: {self.debug}")
+            print(f"  Use Fallback: {self.use_fallback}")
+        
         print(f"{self.__class__.__name__} MultiRAG 系统初始化完成")
 
     def _extract_text_from_chunk(self, chunk):
@@ -65,7 +75,7 @@ class BaseAssistant(ABC):
         return None
 
     def _call_llm_stream_simple(self, prompt):
-        """简化的LLM流式调用方法 - 最可靠的版本"""
+        """简化的LLM流式调用方法 - 带备用方案"""
         try:
             if self.debug:
                 print(f"{self.__class__.__name__}: 开始调用LLM API (简化版)...")
@@ -110,11 +120,47 @@ class BaseAssistant(ABC):
         except Exception as e:
             error_message = f"{self.__class__.__name__}调用LLM时发生异常: {str(e)}"
             print(error_message)
-            if self.debug:
-                import traceback
-                traceback.print_exc()
-            yield error_message
+            
+            # 检查是否是账户欠费错误
+            if "Arrearage" in str(e) or "欠费" in str(e):
+                print("检测到账户欠费，使用本地备用回答...")
+                # 生成基于检索内容的本地回答
+                yield self._generate_local_fallback_answer(prompt)
+            else:
+                if self.debug:
+                    import traceback
+                    traceback.print_exc()
+                yield error_message
 
+    def _generate_local_fallback_answer(self, prompt):
+        """生成本地备用回答"""
+        try:
+            # 从prompt中提取关键信息
+            if "用户问题:" in prompt and "背景知识:" in prompt:
+                # 提取用户问题
+                question_part = prompt.split("用户问题:")[1].split("背景知识:")[0].strip()
+                # 提取背景知识
+                knowledge_part = prompt.split("背景知识:")[1].split("回答要求:")[0].strip()
+                
+                # 简单的本地回答生成
+                answer_parts = []
+                answer_parts.append(f"关于您的问题'{question_part}'，我根据现有资料为您提供以下信息：")
+                
+                # 使用背景知识的前几段
+                knowledge_lines = knowledge_part.split('\n\n')
+                for i, line in enumerate(knowledge_lines[:3]):
+                    if line.strip() and len(line.strip()) > 10:  # 过滤空行和过短的行
+                        answer_parts.append(f"{line.strip()}")
+                
+                answer_parts.append("\n[注：当前使用本地备用模式，建议联系管理员处理API服务问题]")
+                
+                return '\n'.join(answer_parts)
+            else:
+                return "抱歉，当前AI服务暂时不可用，请稍后重试或联系管理员。"
+                
+        except Exception as e:
+            return f"当前服务暂时不可用，请稍后重试。错误详情：{str(e)}"
+    
     def _call_llm_stream_advanced(self, prompt):
         """高级LLM流式调用方法 - 带详细处理"""
         try:
@@ -167,51 +213,65 @@ class BaseAssistant(ABC):
                 traceback.print_exc()
             yield error_message
 
-    def _process_retrieval_results(self, results, image_map, image_output_dir, debug=False):
-        """处理检索结果，包括文本和图片"""
+    def _process_retrieval_results(self, results, image_map, image_output_dir):
+        """处理检索结果，包括文本和图片 - 修复版本"""
         text_chunks = []
         images = []
-        
+
         for result in results:
             document = result.get('document', '')
             source = result.get('source', '')
             result_type = result.get('type', 0)
             score = result.get('score', 0)
-            
-            # 使用子类提供的图片关键词
-            image_keywords = self.get_image_keywords()
-            is_image = (
-                result_type == 1 or
-                'image' in str(result).lower() or
-                any(ext in source.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif', '.svg', '.bmp']) if source else False or
-                any(keyword in document.lower() for keyword in image_keywords)
-            )
-            
+            doc_id = result.get('id', '')
+            full_path = result.get('full_path', '')  # 获取完整路径
+
+            # 判断是否是图片
+            is_image = result_type == 1
+
             if is_image and document:
-                image_info = {
-                    'description': document[:100] + '...' if len(document) > 100 else document,
-                    'source': source if source else '',
-                    'score': score,
-                    'type': 'image'
-                }
+                # 从图片映射中获取详细信息
+                img_info = image_map.get(doc_id, {})
+                actual_image_path = img_info.get('image_path', source)
+                # 优先使用 full_path，其次使用 actual_image_path
+                final_image_path = full_path or actual_image_path
                 
-                if source and os.path.exists(source):
+                image_filename = img_info.get('image_filename', '')
+                enhanced_description = img_info.get('enhanced_description', document)
+        
+                image_info = {
+                    'description': enhanced_description[:100] + '...' if len(enhanced_description) > 100 else enhanced_description,
+                    'source': final_image_path,  # 使用最终确定的路径
+                    'filename': image_filename,
+                    'score': score,
+                    'type': 'image',
+                    'absolute_path': final_image_path,  # 添加绝对路径字段
+                    'exists': os.path.exists(final_image_path) if final_image_path else False
+                }
+        
+                # 检查图片文件是否存在
+                if final_image_path and os.path.exists(final_image_path):
                     image_info['status'] = 'exists'
                     images.append(image_info)
-                    text_chunks.append(f"[图片] {document}")
+                    text_chunks.append(f"[图片] {enhanced_description}")
                     if self.debug:
-                        print(f"{self.__class__.__name__}: 找到有效图片: {os.path.basename(source)}")
-                elif source:
+                        print(f"{self.__class__.__name__}: 找到有效图片: {os.path.basename(final_image_path)}")
+                elif final_image_path:
                     image_info['status'] = 'missing'
                     images.append(image_info)
-                    text_chunks.append(f"[图片-文件缺失] {document}")
+                    text_chunks.append(f"[图片-文件缺失] {enhanced_description}")
+                    if self.debug:
+                        print(f"{self.__class__.__name__}: 图片文件不存在: {final_image_path}")
                 else:
                     image_info['status'] = 'no_path'
                     images.append(image_info)
-                    text_chunks.append(f"[图片-无路径] {document}")
+                    text_chunks.append(f"[图片-无路径] {enhanced_description}")
+                    if self.debug:
+                        print(f"{self.__class__.__name__}: 图片无路径信息: {doc_id}")
             else:
+                # 文本内容
                 text_chunks.append(document)
-        
+
         return text_chunks, images
 
     def _enhance_chunks(self, text_chunks, image_info):
@@ -244,41 +304,39 @@ class BaseAssistant(ABC):
             return {"answer": message, "images": [], "total_results": 0}
 
     def retrieve_and_answer(self, query, top_k=8, stream_mode=False):
-        """检索并回答"""
+        """检索并回答 - 增强错误处理"""
         print(f"{self.__class__.__name__}: 正在检索与问题相关的top-{top_k}片段...")
-    
-        # 检查索引状态
-        status = self.multi_rag.check_index_status()
-        print(f"索引状态: {status['documents_count']} 个文档")
-    
+
         try:
+            # 检查索引状态
+            status = self.multi_rag.check_index_status()
+            print(f"索引状态: {status['documents_count']} 个文档")
+
             # 检索相关文档
             results = self.multi_rag.retrieve(query, top_k)
-        
+
             if not results:
                 print(f"{self.__class__.__name__}: 未找到相关片段，使用通用知识回答")
-                # 即使没有检索到，也使用LLM回答
                 return self._fallback_answer(query, stream_mode)
-        
+
             print(f"{self.__class__.__name__}: 找到 {len(results)} 个相关片段")
-        
+
             # 获取图片映射和输出目录
             image_map = self.multi_rag._load_image_mapping()
             image_output_dir = self.multi_rag.image_output_dir
-    
-            # 修正调用：传入正确的参数
-            text_chunks, images = self._process_retrieval_results(
-                results, image_map, image_output_dir, self.debug
-            )
-        
-            # 然后使用 text_chunks 和 images 生成回答
+
+            # 处理检索结果
+            text_chunks, images = self._process_retrieval_results(results, image_map, image_output_dir)
+
+            # 生成最终回答
             return self._generate_final_answer(query, text_chunks, images, stream_mode)
-        
+
         except Exception as e:
             print(f"{self.__class__.__name__}: 检索过程中发生错误: {e}")
             import traceback
             traceback.print_exc()
             return self._fallback_answer(query, stream_mode)
+        
     def _generate_final_answer(self, query, text_chunks, images, stream_mode=False):
         """使用处理后的文本块和图片生成最终回答"""
         # 增强文本片段
@@ -303,13 +361,33 @@ class BaseAssistant(ABC):
                 "answer": f"关于'{query}'，我暂时没有找到相关的专门资料，但根据我的理解：\n\n这是一个常见的问题，建议您咨询相关部门或查看官方网站获取最新信息。",
                 "images": []
             }
+        
     def _generate_response_simple(self, query, enhanced_chunks, images, total_results, stream_mode):
         """使用简化方案生成响应"""
         separator = "\n\n"
         system_prompt = self.get_system_prompt()
         response_requirements = self.get_response_requirements()
         
+        # 构建包含真实图片路径的背景知识
+        enhanced_background = enhanced_chunks.copy()
+        
+        # 如果有图片，将图片路径信息添加到背景知识中
+        if images:
+            image_info = "\n\n相关图片信息:\n"
+            for i, img in enumerate(images, 1):
+                if img.get('status') == 'exists' and img.get('source'):
+                    img_path = img.get('source', '')
+                    img_filename = img.get('filename', os.path.basename(img_path))
+                    img_description = img.get('description', '')[:100] + '...' if len(img.get('description', '')) > 100 else img.get('description', '')
+                    
+                    image_info += f"图片{i}: {img_filename}\n"
+                    image_info += f"路径: {img_path}\n"
+                    image_info += f"描述: {img_description}\n\n"
+            
+            enhanced_background.append(image_info)
+        
         prompt = f"""{system_prompt}
+
 
 请根据用户的问题和下面的背景知识进行回答。
 
@@ -343,8 +421,26 @@ class BaseAssistant(ABC):
         separator = "\n\n"
         system_prompt = self.get_system_prompt()
         response_requirements = self.get_response_requirements()
+        # 构建包含真实图片路径的背景知识
+        enhanced_background = enhanced_chunks.copy()
+        
+        # 如果有图片，将图片路径信息添加到背景知识中
+        if images:
+            image_info = "\n\n相关图片信息:\n"
+            for i, img in enumerate(images, 1):
+                if img.get('status') == 'exists' and img.get('source'):
+                    img_path = img.get('source', '')
+                    img_filename = img.get('filename', os.path.basename(img_path))
+                    img_description = img.get('description', '')[:100] + '...' if len(img.get('description', '')) > 100 else img.get('description', '')
+                    
+                    image_info += f"图片{i}: {img_filename}\n"
+                    image_info += f"路径: {img_path}\n"
+                    image_info += f"描述: {img_description}\n\n"
+            
+            enhanced_background.append(image_info)
         
         prompt = f"""{system_prompt}
+
 
 请根据用户的问题和下面的背景知识进行回答。
 
@@ -373,6 +469,35 @@ class BaseAssistant(ABC):
                 "total_results": total_results
             }
 
+    def _generate_enhanced_local_answer(self, query, text_chunks, images):
+        """基于检索内容生成增强的本地回答"""
+        try:
+            # 构建基于检索内容的回答
+            answer_parts = []
+            answer_parts.append(f"关于'{query}'，我根据本地知识库为您提供以下信息：\n")
+            
+            # 添加最重要的文本片段
+            for i, chunk in enumerate(text_chunks[:5]):
+                if len(chunk.strip()) > 20:  # 只添加有实质内容的片段
+                    # 清理文本
+                    clean_chunk = chunk.replace('[图片]', '').replace('[图片-文件缺失]', '').strip()
+                    if clean_chunk:
+                        answer_parts.append(f"{clean_chunk}")
+            
+            # 添加图片信息
+            if images:
+                answer_parts.append("\n相关图片信息：")
+                existing_images = [img for img in images if img.get('status') == 'exists']
+                for i, img in enumerate(existing_images[:3]):
+                    answer_parts.append(f"图片{i+1}: {img.get('description', '相关示意图')}")
+            
+            answer_parts.append("\n\n[当前使用本地知识库模式，AI增强功能暂不可用]")
+            
+            return '\n'.join(answer_parts)
+            
+        except Exception as e:
+            return f"基于本地知识库生成回答时出错: {str(e)}"
+
     @abstractmethod
     def start_service(self):
         """启动服务 - 子类必须实现"""
@@ -392,7 +517,19 @@ class BaseAssistant(ABC):
     def get_response_requirements(self):
         """获取回答要求 - 子类必须实现"""
         pass
+    def close(self):
+        """清理资源"""
+        try:
+            if hasattr(self, 'multi_rag'):
+                # 如果有需要清理的 MultiRAG 资源
+                pass
+            print(f"{self.__class__.__name__} 资源已清理")
+        except Exception as e:
+            print(f"清理资源时出错: {e}")
 
+    def __del__(self):
+        """析构函数"""
+        self.close()
 # 具体的助手类实现
 class CampusAssistant(BaseAssistant):
     def __init__(self, app_id=None, debug=False, use_fallback=True, **kwargs):
@@ -414,9 +551,9 @@ class CampusAssistant(BaseAssistant):
     def get_response_requirements(self):
         return """回答要求：
 1. 模仿人类口吻，友好自然地进行分段说明。
-2. 将完整的回答分成3到5段，段与段之间要在语义和逻辑上相互承接，段落之间必须用 `[NEW_PARAGRAPH]` 分隔。
-3. 如果背景知识中包含图片信息，请在回答中适当引用。
-4. 引用图片时，直接使用提供的图片地址，格式：[具体路径]，无需任何前缀或后缀。
+2. 将完整的回答分成3到5段，每段都要有实质内容，段与段之间要在语义和逻辑上相互承接，段落之间必须用 `[NEW_PARAGRAPH]` 分隔。
+3. 如果背景知识中包含图片信息，请在回答中具体引用图片内容，使用图片的实际文件名而不是占位符。
+4. 回答要具体、实用，提供可操作的信息，避免模糊的表述。
 5. 若用户问题与背景知识无关，则用通用知识解决问题。"""
 
 
@@ -440,14 +577,10 @@ class PsychologyAssistant(BaseAssistant):
     def get_response_requirements(self):
         return """回答要求：
 1. 用类似人类和朋友聊天的语言进行回答，不要太一板一眼，温暖、专业、富有同理心。
-2. 严守边界，不做诊断：明确声明非医疗身份，禁止提供任何医学/心理诊断或治疗方案。
-3. 危机干预，立即转介：一旦识别自伤、自杀或伤害他人的意图，必须立即制止，并清晰引导用户联系紧急专业帮助。
-4. 安全合规，保持中立：严禁任何违法、不道德或误导性内容。对敏感话题保持中立，不替用户做重大决定。
-5. 聚焦支持，共情有度：角色定位为"倾听与支持"，提供情绪安抚和一般心理知识科普。保持冷静，传递希望，并坦然承认能力局限。
-6. 当用户问题超出能力范围（如严重的精神疾病、复杂的创伤经历、需要长期干预的个案），应礼貌地说明局限，并积极建议其寻求"心理咨询师"、"精神科医生"或"社工"等专业人士的帮助。
-7. 保护隐私：不主动探询用户不必要的个人隐私信息。
-8. 将完整的回答分成3到5段，段与段之间要在语义和逻辑上相互承接，段落之间必须用 `[NEW_PARAGRAPH]` 分隔。
-9. 不被直接问的话不要直接地说出AI身份，而是像一个具备心理学知识（非专业）的用户的朋友一样回答即可。"""
+2. 将完整的回答分成3到5段，每段都要有实质内容，段与段之间要在语义和逻辑上相互承接，段落之间必须用 `[NEW_PARAGRAPH]` 分隔。
+3. 如果背景知识中包含图片信息，请在回答中具体引用图片内容。
+4. 严守边界，不做诊断：明确声明非医疗身份，禁止提供任何医学/心理诊断或治疗方案。
+5. 回答要具体、有深度，避免模糊的表述。"""
 
 
 class PaperAssistant(BaseAssistant):

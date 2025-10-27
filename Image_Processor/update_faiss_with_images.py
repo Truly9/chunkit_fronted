@@ -48,21 +48,27 @@ class ImageFAISSUpdater:
     def __init__(self, faiss_store_path: str = "faiss_index1"):
         self.faiss_store_path = faiss_store_path
         current_dir = os.path.dirname(os.path.abspath(__file__))
-      
+  
         # 使用本地的Qwen3 embedding模型
         self.embedding_model = SentenceTransformer(
-        os.path.join(os.getcwd(), "Qwen3-Embedding-0___6B"),
-        tokenizer_kwargs={"padding_side": "left"},
-        trust_remote_code=True
+            os.path.join(os.getcwd(), "Qwen3-Embedding-0___6B"),
+            tokenizer_kwargs={"padding_side": "left"},
+            trust_remote_code=True
         )
 
-        # 初始化或加载FAISS存储
+       # 初始化或加载FAISS存储，传递embedding_model
         try:
-            self.faiss_store = FAISSVectorStore(index_path=faiss_store_path)
+            self.faiss_store = FAISSVectorStore(
+                index_path=faiss_store_path, 
+                embedding_model=self.embedding_model  
+            )
             print(f"FAISS存储初始化完成: {faiss_store_path}")
         except Exception as e:
             print(f"初始化FAISS存储时出错: {e}")
-            self.faiss_store = FAISSVectorStore(index_path=faiss_store_path)
+            self.faiss_store = FAISSVectorStore(
+                index_path=faiss_store_path,
+                embedding_model=self.embedding_model  
+            )
 
     def load_processed_images(self, json_path: str) -> List[Dict]:
         """从JSON文件加载处理后的图片数据"""

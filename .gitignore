@@ -27,8 +27,7 @@ var/
 *.swo
 
 # Model files and large data
-Qwen3-Embedding-0___6B/
-cross-encoder-model/
+Qwen3-Embedding-0___6B
 
 # Logs
 *.log

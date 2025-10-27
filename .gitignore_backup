@@ -27,7 +27,7 @@ var/
 *.swo
 
 # Model files and large data
-Qwen3-Embedding-0.6B/
+Qwen3-Embedding-0___6B/
 cross-encoder-model/
 faiss_index/
 

@@ -66,13 +66,13 @@ class ImageExtractor:
         # 初始化Qwen3-VL客户端
         self.qwen3_vl_client = OpenAI(
             base_url='https://api-inference.modelscope.cn/v1',
-            api_key='ms-03eaf898-af6c-4a07-9857-1afb8337c1b4'
+            api_key='ms-e81363c5-a261-4634-b38c-d4d58345ba86'
         )
 
         # 初始化Qwen3.0客户端
         self.qwen3_client = OpenAI(
             base_url='https://api-inference.modelscope.cn/v1',
-            api_key='ms-03eaf898-af6c-4a07-9857-1afb8337c1b4'
+            api_key='ms-e81363c5-a261-4634-b38c-d4d58345ba86'
         )
 
     def _detect_scene(self, folder_path: str) -> str:
@@ -291,10 +291,10 @@ class ImageExtractor:
             return ""
 
     def process_all_documents(self, processed_hashes: Set[str] = None) -> List[Dict]:
-        """处理debug文件夹中的所有Word文档（包括子文件夹），支持增量处理"""
+        """处理debug文件夹中的所有Word文档（包括子文件夹），支持增量处理 - 修复版本"""
         if processed_hashes is None:
             processed_hashes = set()
-            
+        
         all_processed_images = []
         json_file_path = self._get_scene_json_path()
 
@@ -307,38 +307,58 @@ class ImageExtractor:
                     continue
                 if file.endswith('.docx'):
                     docx_files.append(os.path.join(root, file))
-    
+
         print(f"找到 {len(docx_files)} 个Word文档（包括子文件夹）")
-    
+
+        # 加载现有的JSON数据，用于增量检查
+        existing_data = []
+        if os.path.exists(json_file_path):
+            try:
+                with open(json_file_path, 'r', encoding='utf-8') as f:
+                    existing_data = json.load(f)
+                print(f"从JSON文件加载了 {len(existing_data)} 个已处理的图片记录")
+            except Exception as e:
+                print(f"加载现有JSON数据失败: {e}")
+
+        # 创建现有图片哈希的集合
+        existing_hashes = set()
+        for item in existing_data:
+            if 'image_hash' in item:
+                existing_hashes.add(item['image_hash'])
+
+        new_images_count = 0
+        skipped_images_count = 0
+
         for docx_path in docx_files:
             print(f"\n处理文档: {docx_path}")
-        
+    
             try:
                 # 提取图片
                 images_data = self.extract_images_from_docx(docx_path)
                 print(f"从 {os.path.basename(docx_path)} 中提取到 {len(images_data)} 张图片")
-    
+
                 for i, img_data in enumerate(images_data):
                     # 计算图片哈希
                     image_hash = hashlib.md5(img_data['image_data']).hexdigest()[:16]
-                    
-                    # 检查图片是否已处理过
-                    if image_hash in processed_hashes:
+                
+                    # 检查图片是否已处理过（三重检查）
+                    if image_hash in processed_hashes or image_hash in existing_hashes:
                         print(f"  跳过已处理的图片 {i+1}/{len(images_data)} (哈希: {image_hash})")
+                        skipped_images_count += 1
                         continue
-                    
+                
                     print(f"  处理图片 {i + 1}/{len(images_data)}...")
-    
+
                     # 生成统一的文件名 - 使用完整的16位哈希
                     source_file = img_data['source_file']
                     filename = self._generate_image_filename(source_file, i + 1, img_data['image_data'])
-                    
+                
                     # 保存图片文件
                     image_path = self._save_image_file(img_data['image_data'], filename)
-                    
+                
                     if not image_path:
                         continue  # 如果保存失败，跳过这张图片
-    
+
                     # 使用Qwen3-VL识别图片（无限重试）
                     try:
                         image_description = self.describe_image_with_qwen3_vl(img_data['image_data'])
@@ -346,7 +366,7 @@ class ImageExtractor:
                     except Exception as e:
                         print(f"    ❌ 图片识别失败: {e}")
                         image_description = f"图片识别失败: {str(e)}"
-    
+
                     # 使用Qwen3.0完善描述（无限重试）
                     try:
                         enhanced_description = self.enhance_description_with_qwen3(
@@ -358,7 +378,7 @@ class ImageExtractor:
                     except Exception as e:
                         print(f"    ❌ 描述完善失败: {e}")
                         enhanced_description = f"{image_description} [描述完善失败: {str(e)}]"
-    
+
                     # 构建处理后的图片数据
                     processed_img = {
                         'context_before': img_data['context_before'],
@@ -371,20 +391,19 @@ class ImageExtractor:
                         'processed_path': image_path,
                         'original_description': image_description,
                         'enhanced_description': enhanced_description,
-                        'image_hash': image_hash,  # 使用从文件名提取的哈希
+                        'image_hash': image_hash,
                         'scene': self.scene,
                         'paragraph_index': img_data.get('paragraph_index', 0)
                     }
-                    
+                
                     # 添加到结果列表
                     all_processed_images.append(processed_img)
-                    
-                    # 立即写入JSON文件
-                    self._append_to_json(processed_img, json_file_path)
-                    
+                
                     # 添加到已处理哈希集合
                     processed_hashes.add(image_hash)
-                    
+                    existing_hashes.add(image_hash)
+                    new_images_count += 1
+                
                     # 增加延迟避免API限制
                     delay = 5  # 统一5秒延迟
                     print(f"    等待 {delay} 秒避免API限制...")
@@ -393,8 +412,19 @@ class ImageExtractor:
             except Exception as e:
                 print(f"处理文档 {docx_path} 时出错: {e}")
                 continue
-        
-        print(f"\n图片处理完成: 共处理 {len(all_processed_images)} 张图片")
+    
+        # 在处理完成后一次性写入JSON文件
+        if all_processed_images:
+            # 合并现有数据和新数据
+            combined_data = existing_data + all_processed_images
+            try:
+                with open(json_file_path, 'w', encoding='utf-8') as f:
+                    json.dump(combined_data, f, ensure_ascii=False, indent=2)
+                print(f"图片数据已保存到JSON文件: {json_file_path} (新增 {len(all_processed_images)} 条记录)")
+            except Exception as e:
+                print(f"写入JSON文件失败: {e}")
+
+        print(f"\n图片处理完成: 共处理 {new_images_count} 张新图片，跳过 {skipped_images_count} 张已处理图片")
         print(f"   输出目录: {self.output_dir}")
         return all_processed_images
 

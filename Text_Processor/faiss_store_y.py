@@ -21,7 +21,7 @@ class FAISSVectorStore:
     """FAISS向量存储类"""
     
     def __init__(self, index_path: str, collection_name: str = "document_embeddings",
-                 dimension: int = 1024, reset: bool = False):
+                 dimension: int = 1024, reset: bool = False, embedding_model=None):
         """
         初始化FAISS向量存储
         
@@ -30,10 +30,12 @@ class FAISSVectorStore:
             collection_name: 集合名称，用于生成索引文件名
             dimension: 向量维度
             reset: 是否重置索引
+            embedding_model: 嵌入模型，用于文本编码
         """
         self.index_path = index_path
         self.collection_name = collection_name
         self.dimension = dimension
+        self.embedding_model = embedding_model  # 添加embedding_model属性
 
         # 创建索引目录
         try:
@@ -83,6 +85,7 @@ class FAISSVectorStore:
             self.metadata = {}
             self.id_to_idx = {}
             self.idx_to_id = {}
+            self.documents = {}  # 添加documents属性
             self.next_idx = 0
             print(f"创建新的FAISS索引，维度: {self.dimension}")
             
@@ -112,16 +115,23 @@ class FAISSVectorStore:
                     self.id_to_idx = data.get('id_to_idx', {})
                     self.idx_to_id = {str(v): k for k, v in self.id_to_idx.items()}
                     self.next_idx = data.get('next_idx', 0)
+                    
+                    # 从metadata中重建documents
+                    self.documents = {}
+                    for doc_id, meta in self.metadata.items():
+                        self.documents[doc_id] = meta.get('content', '')
             else:
                 print("元数据文件不存在，初始化空元数据")
                 self.metadata = {}
                 self.id_to_idx = {}
                 self.idx_to_id = {}
+                self.documents = {}
                 self.next_idx = 0
             
             print(f"加载现有FAISS索引，当前文档数量: {self.index.ntotal}")
             print(f"元数据中的文档数量: {len(self.metadata)}")
             print(f"映射表中的文档数量: {len(self.id_to_idx)}")
+            print(f"文档内容数量: {len(self.documents)}")
             
             # 验证索引和元数据的一致性
             if self.index.ntotal != len(self.metadata):
@@ -165,6 +175,7 @@ class FAISSVectorStore:
             idx = start_idx + i
             self.id_to_idx[doc_id] = idx
             self.idx_to_id[str(idx)] = doc_id
+            self.documents[doc_id] = document  # 添加到documents
         
             # 存储文档内容和元数据
             doc_metadata = {
@@ -188,67 +199,50 @@ class FAISSVectorStore:
     
         print(f"添加完成: 总文档数={self.count()}, 下一个索引={self.next_idx}")
     
-    def search(self, query_embedding, top_k=5):
-        """搜索相似的文档"""
+    def search(self, query, top_k=5):
+        """搜索相似的文档
+    
+        Args:
+            query: 查询文本或查询向量
+            top_k: 返回最相似的k个结果
+        """
         try:
+            # 如果query是字符串，先编码为向量
+            if isinstance(query, str):
+                if self.embedding_model is None:
+                    raise ValueError("查询是字符串但没有提供embedding_model")
+                print(f"编码查询文本: '{query}'")
+                query_embedding = self.embedding_model.encode([query])[0].tolist()
+            else:
+                query_embedding = query
+            
             print(f"FAISS搜索: top_k={top_k}, 查询向量长度={len(query_embedding)}")
-    
-            if self.index is None:
-                print("❌ FAISS索引未加载")
-                return []
         
-            # 检查索引中是否有文档
-            if self.index.ntotal == 0:
-                print("❌ FAISS索引为空")
-                return []
-                
-            # 转换查询向量为numpy数组
-            import numpy as np
             query_vector = np.array([query_embedding]).astype('float32')
-            
-            # 检查查询向量维度
-            if query_vector.shape[1] != self.dimension:
-                print(f"❌ 查询向量维度不匹配: 期望{self.dimension}, 实际{query_vector.shape[1]}")
-                return []
-                
-            print(f"查询向量形状: {query_vector.shape}")
-            print(f"索引中的总向量数: {self.index.ntotal}")
-            print(f"映射表中的文档数量: {len(self.idx_to_id)}")
-
+        
             # 执行搜索
-            scores, indices = self.index.search(query_vector, min(top_k, self.index.ntotal))
-            print(f"搜索返回: {len(indices[0])} 个结果")
-
+            distances, indices = self.index.search(query_vector, top_k)
+        
             results = []
-            valid_count = 0
-            invalid_count = 0
+            for i, (distance, idx) in enumerate(zip(distances[0], indices[0])):
+                if idx != -1:
+                    # 通过索引找到文档ID
+                    str_idx = str(idx)
+                    if str_idx in self.idx_to_id:
+                        doc_id = self.idx_to_id[str_idx]
+                        document = self.documents.get(doc_id, '')
+                        metadata = self.metadata.get(doc_id, {})
+                    
+                        results.append({
+                            'id': doc_id,
+                            'document': document,
+                            'metadata': metadata,
+                            'score': float(1 - distance)  # 转换为相似度分数
+                        })
         
-            for i, (score, idx) in enumerate(zip(scores[0], indices[0])):
-                if idx == -1:  # FAISS返回-1表示没有足够的结果
-                    continue
-            
-                idx_str = str(idx)
-                if idx_str in self.idx_to_id:
-                    doc_id = self.idx_to_id[idx_str]
-                    doc_metadata = self.metadata.get(doc_id, {})
-                    content = doc_metadata.get('content', '')
-            
-                    result = {
-                        'id': doc_id,
-                        'content': content,
-                        'score': float(score)
-                    }
-                    results.append(result)
-                    valid_count += 1
-                    print(f"  ✅ 结果{i+1}: idx={idx}, score={score:.4f}, id={doc_id}")
-                    print(f"      内容预览: {content[:80]}...")
-                else:
-                    invalid_count += 1
-                    print(f"  ❌ 索引映射不存在: idx={idx}, 总映射数={len(self.idx_to_id)}")
-        
-            print(f"有效结果: {valid_count}, 无效映射: {invalid_count}")
+            print(f"搜索完成，找到 {len(results)} 个结果")
             return results
-    
+        
         except Exception as e:
             print(f"❌ FAISS搜索失败: {e}")
             import traceback
@@ -271,6 +265,8 @@ class FAISSVectorStore:
                 del self.id_to_idx[doc_id]
                 if str(idx) in self.idx_to_id:
                     del self.idx_to_id[str(idx)]
+            if doc_id in self.documents:
+                del self.documents[doc_id]
         
         if deleted_count > 0:
             print(f"删除了 {deleted_count} 个文档")
