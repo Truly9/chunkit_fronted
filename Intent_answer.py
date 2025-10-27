@@ -107,19 +107,31 @@ class InteractiveAgent:
             return [{"success": False, "message": f"处理过程中发生严重错误: {str(e)}"}]
 
     def get_campus_assistant(self):
-        """延迟初始化校园 Assistant - 增强调试"""
+        """延迟初始化校园 Assistant - 简化版本"""
         if self.campus_assistant is None:
             try:
-                self.campus_assistant = CampusAssistant(debug=self.debug)  
+                campus_app_id = os.getenv('APP_ID_CAMPUS')
+                print(f"🔄 初始化 CampusAssistant, App ID: {campus_app_id}")
+                
+                self.campus_assistant = CampusAssistant(
+                    app_id=campus_app_id,
+                    debug=self.debug,
+                    use_fallback=True
+                )
+                
+                # 直接调用 start_service，不处理复杂状态
                 result = self.campus_assistant.start_service()
+                print(f"✅ CampusAssistant: {result}")
+                
+                return self.campus_assistant
+                
             except Exception as e:
-                print(f"❌ 校园 Assistant 初始化失败: {e}")
+                print(f"❌ CampusAssistant 初始化失败: {e}")
                 import traceback
                 traceback.print_exc()
                 return None
-        else:
-            return self.campus_assistant
-
+        return self.campus_assistant
+    
     def get_psychology_assistant(self):
         """延迟初始化心理 Assistant"""
         if self.psychology_assistant is None:
@@ -187,7 +199,7 @@ class InteractiveAgent:
             return response
         
     def _get_batch_answers_for_intents(self, enhancement_result: dict) -> list:
-        """非流式处理 - 返回完整的回答和图片 - 增强错误处理"""
+        """非流式处理 - 返回完整的回答和图片 - 修复版本"""
         all_responses = []
         original_query = enhancement_result.get("original_query")
 
@@ -210,40 +222,16 @@ class InteractiveAgent:
                             result_dict = campus_assistant.retrieve_and_answer(original_query, top_k=8, stream_mode=False)
                         except Exception as e:
                             print(f"❌ 校园助手处理失败: {e}")
-                            import traceback
-                            traceback.print_exc()
-                            result_dict = {
-                                "answer": f"校园助手处理时出现错误: {str(e)}",
-                                "images": []
-                            }
+                            # 直接抛出异常，不生成备用回答
+                            raise Exception(f"校园助手LLM调用失败: {str(e)}")
                     else:
                         print("❌ 校园助手初始化失败")
-                        result_dict = {"answer": "抱歉，校园助手初始化失败。", "images": []}
-                
-                elif Rag_intent == "心理助手":
-                    psychology_assistant = self.get_psychology_assistant()
-                    if psychology_assistant:
-                        try:
-                            result_dict = psychology_assistant.retrieve_and_answer(original_query, top_k=8, stream_mode=False)
-                        except Exception as e:
-                            print(f"❌ 心理助手处理失败: {e}")
-                            import traceback
-                            traceback.print_exc()
-                            result_dict = {
-                                "answer": f"心理助手处理时出现错误: {str(e)}",
-                                "images": []
-                            }
-                    else:
-                        print("❌ 心理助手初始化失败")
-                        result_dict = {"answer": "抱歉，心理学助手初始化失败。", "images": []}
+                        raise Exception("校园助手初始化失败")
                 
                 # 构建响应
                 if result_dict:
                     answer = result_dict.get("answer", "")
                     
-                    # 检查是否是API错误，如果是则提供更友好的提示
-                    if "Arrearage" in answer or "欠费" in answer or "API" in answer:
-                        answer = "当前AI服务暂时不可用，正在使用本地知识库为您提供信息。\n\n" + answer
                     # 处理分段显示
                     formatted_response = self._format_response_with_avatar({
                         "avatar": avatar,
@@ -252,17 +240,26 @@ class InteractiveAgent:
                     })
                     formatted_answer = formatted_response.get('formatted_answer', answer)
                     
-                    # 处理图片信息
+                    # 处理图片信息 - 确保使用绝对路径
                     images = result_dict.get("images", [])
                     formatted_images = []
                     for img_info in images:
-                        if img_info.get('status') == 'exists' and img_info.get('absolute_path'):
-                            formatted_images.append({
-                                'absolute_path': img_info['absolute_path'],
-                                'filename': img_info.get('filename', os.path.basename(img_info['absolute_path'])),
-                                'description': img_info.get('description', '')
-                            })
+                        if img_info.get('status') == 'exists':
+                            # 优先使用 absolute_path，其次使用 source
+                            absolute_path = img_info.get('absolute_path') or img_info.get('source')
+                            if absolute_path:
+                                # 确保路径是绝对路径
+                                if not os.path.isabs(absolute_path):
+                                    absolute_path = os.path.abspath(absolute_path)
+                                
+                                formatted_images.append({
+                                    'absolute_path': absolute_path,
+                                    'filename': img_info.get('filename', os.path.basename(absolute_path)),
+                                    'description': img_info.get('description', '')
+                                })
                     
+                    # 添加调试信息
+                    print(f"✅ {Rag_intent}: 回答长度={len(answer)}, 图片数量={len(formatted_images)}")
                     
                     all_responses.append({
                         "success": True, 
@@ -273,19 +270,11 @@ class InteractiveAgent:
                     })
                 else:
                     print("调试: result_dict 为 None")
-                    all_responses.append({
-                        "success": False, 
-                        "intent": Rag_intent, 
-                        "avatar": avatar, 
-                        "error": "未能获取到回答",
-                        "images": []
-                    })
+                    raise Exception("未能获取到回答")
                 
             except Exception as e:
                 error_msg = f"处理意图 '{Rag_intent}' 时发生错误: {str(e)}"
                 print(f"{error_msg}")
-                import traceback
-                traceback.print_exc()
                 all_responses.append({
                     "success": False, 
                     "intent": Rag_intent, 
@@ -508,23 +497,32 @@ class InteractiveAgent:
                         answer = response.get('answer', '（无回答）')
                         images = response.get('images', [])
                     
-                        print(f"{avatar} {intent}: {answer}")
+                        # 打印回答内容 - 确保显示
+                        if answer and answer.strip():
+                            print(f"{avatar} {intent}: {answer}")
+                        else:
+                            print(f"{avatar} {intent}: 抱歉，未能生成回答内容。")
                     
-                    if images:
-                        print(f"相关图片:")
-                        for i, img_info in enumerate(images, 1):
+                        # 打印图片信息
+                        if images:
+                            print(f"相关图片:")
+                            for i, img_info in enumerate(images, 1):
                                 abs_path = img_info.get('absolute_path', '')
-                                if abs_path and os.path.exists(abs_path):
-                                    print(f"    图片{i}: {os.path.basename(abs_path)}")
+                                if abs_path:
+                                    # 显示绝对路径
+                                    print(f"    图片{i}: {abs_path}")
+                                    if os.path.exists(abs_path):
+                                        print(f"        ✅ 文件存在")
+                                    else:
+                                        print(f"        ❌ 文件不存在")
                                 else:
-                                    print(f"    图片{i}: 文件不存在或路径无效")
-                        print()
+                                    print(f"    图片{i}: 路径无效")
+                            print()
                     else:
                         intent = response.get('intent', '未知意图')
                         error_msg = response.get('error', '未知错误')
                         print(f"处理意图 '{intent}' 时出错: {error_msg}\n")
                 print("------------\n")
-
 
 if __name__ == "__main__":
     try:

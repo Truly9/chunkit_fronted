@@ -24,6 +24,32 @@ from Utils.Path import (
 APP_ID = "c2affdebf6664d438a4043216ee15dea"
 apiKey = "sk-f89e754d6cff4f31a25f609e82b3bce1"
 
+#--重构为基类+子类架构，消除代码重复，统一所有助手的图片检索、流式输出和错误处理逻辑--#
+from dashscope import Application
+from http import HTTPStatus
+import os
+import sys
+from abc import ABC, abstractmethod
+
+multiRAG_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, multiRAG_dir)
+from multiRAG import MultiRAG
+from ClassAssistant.LLMmodel import LLM_compus, LLM_psychology, LLM_paper, LLM_fitness
+
+
+from Utils.Path import (
+    PAPER_DOCS_DIR, CAMPUS_DOCS_DIR, FITNESS_DOCS_DIR, PSYCHOLOGY_DOCS_DIR,
+    PAPER_INDEX_DIR, CAMPUS_INDEX_DIR, FITNESS_INDEX_DIR, PSYCHOLOGY_INDEX_DIR,
+    ALL_PROCESSED_IMAGES_DIR, CAMPUS_IMAGES_DIR, PAPER_IMAGES_DIR, FITNESS_IMAGES_DIR, PSYCHOLOGY_IMAGES_DIR,
+    CAMPUS_PROCESSED_EXTRACTED_IMAGES, PSYCHOLOGY_PROCESSED_EXTRACTED_IMAGES,
+    CAMPUS_EXTRACTED_IMAGES_JSON, PSYCHOLOGY_EXTRACTED_IMAGES_JSON,
+    CAMPUS_IMAGES_PATH, PSYCHOLOGY_IMAGES_PATH,
+    CAMPUS_IMAGES_MAPPING_PATH, PSYCHOLOGY_IMAGES_MAPPING_PATH
+)
+
+APP_ID = "c2affdebf6664d438a4043216ee15dea"
+apiKey = "sk-08331d936d254185aa67adff58bfd5eb"
+
 class BaseAssistant(ABC):
     """所有助手的基类，提供通用功能"""
     
@@ -75,10 +101,11 @@ class BaseAssistant(ABC):
         return None
 
     def _call_llm_stream_simple(self, prompt):
-        """简化的LLM流式调用方法 - 带备用方案"""
+        """简化的LLM流式调用方法 - 使用字典访问方式"""
         try:
             if self.debug:
-                print(f"{self.__class__.__name__}: 开始调用LLM API (简化版)...")
+                print(f"{self.__class__.__name__}: 开始调用LLM API...")
+                print(f"Prompt预览: {prompt[:200]}...")
             
             response = Application.call(
                 api_key=self.api_key,
@@ -90,48 +117,87 @@ class BaseAssistant(ABC):
             
             full_text = ""
             for chunk in response:
-                # 简单直接地提取文本
-                text = ""
+                if self.debug:
+                    print(f"原始chunk类型: {type(chunk)}")
+                    print(f"原始chunk内容: {chunk}")
+                
+                # 使用字典方式访问响应数据
+                text_content = ""
+                
                 try:
-                    # 尝试多种提取方式
-                    if hasattr(chunk, 'output') and hasattr(chunk.output, 'text'):
-                        text = chunk.output.text or ""
-                    elif hasattr(chunk, 'text'):
-                        text = chunk.text or ""
-                    elif isinstance(chunk, dict):
-                        text = chunk.get('output', {}).get('text', '') or chunk.get('text', '')
+                    # 方法1: 尝试直接访问字典键
+                    if isinstance(chunk, dict):
+                        text_content = chunk.get('output', {}).get('text', '') or chunk.get('text', '')
+                    else:
+                        # 方法2: 尝试使用 getattr 或字典方式访问
+                        try:
+                            # 先尝试作为字典访问
+                            text_content = chunk.get('output', {}).get('text', '') or chunk.get('text', '')
+                        except:
+                            # 再尝试作为对象访问
+                            if hasattr(chunk, 'output') and hasattr(chunk.output, 'text'):
+                                text_content = chunk.output.text
+                            elif hasattr(chunk, 'text'):
+                                text_content = chunk.text
                 except Exception as e:
                     if self.debug:
                         print(f"提取文本时出错: {e}")
                 
-                if text and text != full_text:
-                    # 返回新增的文本
-                    if text.startswith(full_text):
-                        new_text = text[len(full_text):]
+                # 如果以上方法都失败，尝试字符串转换
+                if not text_content:
+                    try:
+                        chunk_str = str(chunk)
+                        # 尝试从字符串中提取文本
+                        import re
+                        # 查找文本内容
+                        if 'text' in chunk_str:
+                            # 尝试匹配JSON格式
+                            match = re.search(r'"text":\s*"([^"]*)"', chunk_str)
+                            if match:
+                                text_content = match.group(1)
+                            else:
+                                # 如果没有匹配到，使用整个字符串（去除特殊字符）
+                                text_content = re.sub(r'[^\w\s\u4e00-\u9fff，。！？]', '', chunk_str)
+                    except:
+                        text_content = ""
+                
+                # 清理文本内容
+                text_content = text_content.strip() if text_content else ""
+                
+                if text_content:
+                    # 只返回新增的文本
+                    if full_text and text_content.startswith(full_text):
+                        new_text = text_content[len(full_text):]
                         if new_text.strip():
                             yield new_text
+                            full_text = text_content
                     else:
-                        yield text
-                    full_text = text
+                        yield text_content
+                        full_text = text_content
+                
+                if self.debug and text_content:
+                    print(f"提取到的文本: '{text_content}'")
             
             if self.debug:
-                print(f"{self.__class__.__name__}: 流式调用完成")
+                print(f"{self.__class__.__name__}: 流式调用完成，总文本长度: {len(full_text)}")
+                
+            # 如果最终没有生成任何文本，抛出异常
+            if not full_text.strip():
+                raise Exception("LLM API调用成功但返回了空内容")
         
         except Exception as e:
             error_message = f"{self.__class__.__name__}调用LLM时发生异常: {str(e)}"
             print(error_message)
             
-            # 检查是否是账户欠费错误
-            if "Arrearage" in str(e) or "欠费" in str(e):
-                print("检测到账户欠费，使用本地备用回答...")
-                # 生成基于检索内容的本地回答
-                yield self._generate_local_fallback_answer(prompt)
-            else:
-                if self.debug:
-                    import traceback
-                    traceback.print_exc()
-                yield error_message
-
+            # 提供更详细的错误信息
+            if self.debug:
+                import traceback
+                print("详细错误信息:")
+                traceback.print_exc()
+            
+            # 重新抛出异常，让上层处理
+            raise Exception(f"LLM调用失败: {str(e)}")
+    
     def _generate_local_fallback_answer(self, prompt):
         """生成本地备用回答"""
         try:
@@ -162,7 +228,7 @@ class BaseAssistant(ABC):
             return f"当前服务暂时不可用，请稍后重试。错误详情：{str(e)}"
     
     def _call_llm_stream_advanced(self, prompt):
-        """高级LLM流式调用方法 - 带详细处理"""
+        """高级LLM流式调用方法 - 修复版本"""
         try:
             if self.debug:
                 print(f"{self.__class__.__name__}: 开始调用LLM API (高级版)...")
@@ -182,7 +248,17 @@ class BaseAssistant(ABC):
             for chunk in response:
                 chunk_count += 1
                 
-                text_content = self._extract_text_from_chunk(chunk)
+                # 使用 content 而不是 text
+                text_content = ""
+                try:
+                    # 优先使用 content 属性
+                    if hasattr(chunk, 'content') and chunk.content:
+                        text_content = chunk.content
+                    elif hasattr(chunk, 'output') and hasattr(chunk.output, 'content') and chunk.output.content:
+                        text_content = chunk.output.content
+                except Exception as e:
+                    if self.debug:
+                        print(f"提取文本时出错: {e}")
                 
                 if self.debug:
                     print(f"Chunk {chunk_count}: '{text_content}'")
@@ -211,7 +287,7 @@ class BaseAssistant(ABC):
             if self.debug:
                 import traceback
                 traceback.print_exc()
-            yield error_message
+            raise Exception(f"LLM调用失败: {str(e)}")
 
     def _process_retrieval_results(self, results, image_map, image_output_dir):
         """处理检索结果，包括文本和图片 - 修复版本"""
@@ -236,6 +312,11 @@ class BaseAssistant(ABC):
                 # 优先使用 full_path，其次使用 actual_image_path
                 final_image_path = full_path or actual_image_path
                 
+                # 确保是绝对路径
+                if final_image_path and not os.path.isabs(final_image_path):
+                    # 如果是相对路径，转换为绝对路径
+                    final_image_path = os.path.abspath(final_image_path)
+                
                 image_filename = img_info.get('image_filename', '')
                 enhanced_description = img_info.get('enhanced_description', document)
         
@@ -255,7 +336,7 @@ class BaseAssistant(ABC):
                     images.append(image_info)
                     text_chunks.append(f"[图片] {enhanced_description}")
                     if self.debug:
-                        print(f"{self.__class__.__name__}: 找到有效图片: {os.path.basename(final_image_path)}")
+                        print(f"{self.__class__.__name__}: 找到有效图片: {final_image_path}")
                 elif final_image_path:
                     image_info['status'] = 'missing'
                     images.append(image_info)
@@ -304,15 +385,11 @@ class BaseAssistant(ABC):
             return {"answer": message, "images": [], "total_results": 0}
 
     def retrieve_and_answer(self, query, top_k=8, stream_mode=False):
-        """检索并回答 - 增强错误处理"""
+        """检索并回答 - 简化版本，无索引检查"""
         print(f"{self.__class__.__name__}: 正在检索与问题相关的top-{top_k}片段...")
 
         try:
-            # 检查索引状态
-            status = self.multi_rag.check_index_status()
-            print(f"索引状态: {status['documents_count']} 个文档")
-
-            # 检索相关文档
+            # 直接检索相关文档，不进行索引检查
             results = self.multi_rag.retrieve(query, top_k)
 
             if not results:
@@ -327,6 +404,12 @@ class BaseAssistant(ABC):
 
             # 处理检索结果
             text_chunks, images = self._process_retrieval_results(results, image_map, image_output_dir)
+            
+            if self.debug:
+                print(f"{self.__class__.__name__}: 处理后的文本片段数量: {len(text_chunks)}")
+                print(f"{self.__class__.__name__}: 处理后的图片数量: {len(images)}")
+                for i, chunk in enumerate(text_chunks[:3]):  # 显示前3个文本片段
+                    print(f"  文本片段{i+1}: {chunk[:100]}...")
 
             # 生成最终回答
             return self._generate_final_answer(query, text_chunks, images, stream_mode)
@@ -363,43 +446,29 @@ class BaseAssistant(ABC):
             }
         
     def _generate_response_simple(self, query, enhanced_chunks, images, total_results, stream_mode):
-        """使用简化方案生成响应"""
+        """使用简化方案生成响应 - 修复版本"""
         separator = "\n\n"
         system_prompt = self.get_system_prompt()
         response_requirements = self.get_response_requirements()
         
-        # 构建包含真实图片路径的背景知识
-        enhanced_background = enhanced_chunks.copy()
-        
-        # 如果有图片，将图片路径信息添加到背景知识中
-        if images:
-            image_info = "\n\n相关图片信息:\n"
-            for i, img in enumerate(images, 1):
-                if img.get('status') == 'exists' and img.get('source'):
-                    img_path = img.get('source', '')
-                    img_filename = img.get('filename', os.path.basename(img_path))
-                    img_description = img.get('description', '')[:100] + '...' if len(img.get('description', '')) > 100 else img.get('description', '')
-                    
-                    image_info += f"图片{i}: {img_filename}\n"
-                    image_info += f"路径: {img_path}\n"
-                    image_info += f"描述: {img_description}\n\n"
-            
-            enhanced_background.append(image_info)
-        
         prompt = f"""{system_prompt}
 
 
-请根据用户的问题和下面的背景知识进行回答。
+    请根据用户的问题和下面的背景知识进行回答。
 
-用户问题: {query}
+    用户问题: {query}
 
-背景知识:
-{separator.join(enhanced_chunks)}
+    背景知识:
+    {separator.join(enhanced_chunks)}
 
-{response_requirements}
+    {response_requirements}
 
-请开始你的回答：
-"""
+    请开始你的回答：
+    """
+
+        if self.debug:
+            print(f"{self.__class__.__name__}: 生成的Prompt长度: {len(prompt)}")
+            print(f"{self.__class__.__name__}: 背景知识片段数量: {len(enhanced_chunks)}")
 
         if stream_mode:
             return {
@@ -408,14 +477,23 @@ class BaseAssistant(ABC):
                 "total_results": total_results
             }
         else:
+            if self.debug:
+                print(f"{self.__class__.__name__}: 开始非流式调用LLM...")
+            
             answer_chunks = list(self._call_llm_stream_simple(prompt))
             answer = "".join(answer_chunks)
+            
+            if self.debug:
+                print(f"{self.__class__.__name__}: 生成的回答长度: {len(answer)}")
+                if answer:
+                    print(f"{self.__class__.__name__}: 回答预览: {answer[:200]}...")
+            
             return {
                 "answer": answer,
                 "images": [img for img in images if img.get('status') == 'exists'],
                 "total_results": total_results
             }
-
+        
     def _generate_response_advanced(self, query, enhanced_chunks, images, total_results, stream_mode):
         """使用高级方案生成响应"""
         separator = "\n\n"
@@ -533,14 +611,32 @@ class BaseAssistant(ABC):
 # 具体的助手类实现
 class CampusAssistant(BaseAssistant):
     def __init__(self, app_id=None, debug=False, use_fallback=True, **kwargs):
-        # 传递所有参数给父类
-        super().__init__(app_id, "campus_session", "campus", LLM_compus, 
+        # 确保 app_id 有合理的默认值
+        actual_app_id = app_id or os.getenv('APP_ID_CAMPUS')
+        if not actual_app_id:
+            raise ValueError("CampusAssistant: 必须提供 app_id 或设置 APP_ID_CAMPUS 环境变量")
+        
+        super().__init__(actual_app_id, "campus_session", "campus", LLM_compus, 
                         debug=debug, use_fallback=use_fallback, **kwargs)
-        # 手动设置 LLM 实例
-        self.llm_instance = LLM_compus(self.app_id)
+        
+        # 验证 MultiRAG 初始化
+        if hasattr(self.multi_rag, 'index_path'):
+            print(f"✅ CampusAssistant MultiRAG 初始化成功")
+            print(f"   索引路径: {self.multi_rag.index_path}")
+        else:
+            print("❌ CampusAssistant MultiRAG 初始化异常")
 
     def start_service(self):
-        return "校园助手启动成功"
+        """启动服务 - 简化版本，无索引检查"""
+        try:
+            # 直接返回成功，不进行索引检查
+            if self.debug:
+                print("CampusAssistant 服务启动成功")
+            return "校园助手启动成功"
+        except Exception as e:
+            error_msg = f"CampusAssistant 启动失败: {str(e)}"
+            print(error_msg)
+            raise Exception(error_msg)
 
     def get_system_prompt(self):
         return self.llm_instance.get_stream_system_prompt()
@@ -559,13 +655,11 @@ class CampusAssistant(BaseAssistant):
 
 class PsychologyAssistant(BaseAssistant):
     def __init__(self, app_id=None, debug=False, use_fallback=True, **kwargs):
-        # 传递所有参数给父类
         super().__init__(app_id, "psychology_session", "psychology", LLM_psychology, 
                         debug=debug, use_fallback=use_fallback, **kwargs)
-        # 手动设置 LLM 实例
-        self.llm_instance = LLM_psychology(self.app_id)
 
     def start_service(self):
+        """启动服务 - 简化版本"""
         return "心理学助手启动成功"
 
     def get_system_prompt(self):
